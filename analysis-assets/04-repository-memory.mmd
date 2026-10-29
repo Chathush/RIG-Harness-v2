@@ -1,0 +1,27 @@
+%%{init: {"theme":"base","fontFamily":"Arial, sans-serif","themeVariables":{"fontFamily":"Arial, sans-serif","fontSize":"16px","primaryTextColor":"#e5e7eb","lineColor":"#b6c2d1","clusterBkg":"#242933","clusterBorder":"#566174","darkMode":true,"background":"#1e1e1e","primaryColor":"#293a49","primaryBorderColor":"#6d92ae","secondaryColor":"#303447","secondaryTextColor":"#e3e7f0","secondaryBorderColor":"#818aa8","tertiaryColor":"#242933","tertiaryTextColor":"#e4e8ee","tertiaryBorderColor":"#566174","textColor":"#e5e7eb","titleColor":"#e4e8ee","nodeTextColor":"#e5e7eb","edgeLabelBackground":"#242933"},"flowchart":{"curve":"basis","wrappingWidth":260,"nodeSpacing":28,"rankSpacing":38,"useMaxWidth":false},"themeCSS":".cluster-label text, .cluster-label span, .cluster-label p { fill: #e4e8ee !important; color: #e4e8ee !important; } .edgeLabel { color: #e5e7eb !important; } .edgeLabel rect { fill: #242933 !important; opacity: 1 !important; } .node rect, .node polygon, .node path, .node circle, .node ellipse, .cluster rect { filter: none !important; }"}}%%
+flowchart LR
+    root[("Consumer repository<br/>.rig/")]:::data
+    product["product/<br/>Shared product decisions"]:::flow
+    change["changes/&lt;slug&gt;/<br/>One scoped change"]:::flow
+    policy["Policy and knowledge"]:::flow
+    prodFiles["architecture.md · adr/<br/>sprints/sprint-N/<br/>PRD, intents, plan, testplan"]:::data
+    intent["intent.md + spec.md<br/>Purpose, behaviours, blast radius"]:::data
+    plan["plan.md + approval.json<br/>Files, tests, approved hashes"]:::data
+    proof["evidence/runs.jsonl<br/>verify.json · review.md<br/>Outcomes and review findings"]:::data
+    config["sensors.json + rules.json<br/>Checks, policy, known failures"]:::data
+    knowledge["wiki.json + wiki/ + lessons.md<br/>Cited code map and accepted lessons"]:::data
+    root --> product --> prodFiles
+    root --> change
+    change --> intent
+    change --> plan
+    change --> proof
+    root --> policy
+    policy --> config
+    policy --> knowledge
+    classDef human fill:#3f382c,stroke:#a68a5b,color:#eee5d5,stroke-width:2px;
+    classDef agent fill:#303447,stroke:#818aa8,color:#e3e7f0,stroke-width:2px;
+    classDef flow fill:#293a49,stroke:#6d92ae,color:#e0e9f1,stroke-width:2px;
+    classDef check fill:#293d3a,stroke:#729b92,color:#e0ece8,stroke-width:2px;
+    classDef data fill:#30363f,stroke:#7d899a,color:#e4e8ee,stroke-width:2px;
+    classDef pass fill:#2b3e32,stroke:#7e9d86,color:#e1ece4,stroke-width:2px;
+    classDef fail fill:#452f34,stroke:#b1848c,color:#f0e1e2,stroke-width:2px;

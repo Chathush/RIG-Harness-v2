@@ -1,0 +1,88 @@
+// Spec 13.3 and 13.5: every seeded defect is caught at Stop (no active change, the vibe path) and in CI,
+// and every forgery attempt is denied locally or judged against the base.
+import { test, beforeEach } from 'node:test'
+import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import path from 'node:path'
+import { makeRepo, sdlc, hook, write, gitIn, fromOld } from './testkit.ts'
+
+let repo: string
+let consumer: string
+const BASE_TEST = "import { test } from 'node:test'\nimport assert from 'node:assert'\nimport { add } from '../src/add.js'\ntest('B1 adds', () => {\n  assert.equal(add(1, 2), 3)\n  assert.equal(add(0, 0), 0)\n})\n"
+
+beforeEach(() => {
+  repo = makeRepo()
+  consumer = path.join(path.dirname(repo), `${path.basename(repo)}-checkout`)
+  fs.mkdirSync(consumer)
+  gitIn(consumer, 'init', '-q', '-b', 'main')
+  write(consumer, 'src/cart.ts', 'const r = order.discount_rate\n')
+  gitIn(consumer, 'add', '.')
+  gitIn(consumer, '-c', 'user.email=t@e', '-c', 'user.name=T', 'commit', '-qm', 'init')
+  sdlc(repo, ['init'])
+  write(repo, '.rig/sensors.json', fromOld({
+    layers: [{ from: 'src/domain/**', mustNotImport: ['infra'], why: 'the domain stays framework-free' }],
+    limits: { diffLines: 500, fileLines: 400 },
+  }))
+  sdlc(repo, ['sync'])
+  write(repo, 'package.json', '{ "type": "module" }\n')
+  write(repo, 'src/add.js', 'export const add = (a, b) => a + b\n')
+  write(repo, 'test/add.test.js', BASE_TEST)
+  write(repo, 'schema/billing.sql', 'CREATE TABLE billing (discount_rate NUMERIC);\n')
+  gitIn(repo, 'add', '.')
+  gitIn(repo, 'commit', '-qm', 'base')
+  gitIn(repo, 'checkout', '-qb', 'pr')
+  hook(repo, 'prompt-submit', {})
+})
+
+const DEFECTS: [string, RegExp, () => void][] = [
+  ['weakened assertion', /test-tamper/, () => write(repo, 'test/add.test.js', BASE_TEST.replace('  assert.equal(add(0, 0), 0)\n', ''))],
+  ['added .skip', /test-tamper/, () => write(repo, 'test/add.test.js', BASE_TEST.replace("test('B1", "test.skip('B1"))],
+  ['domain imports infra', /layering/, () => write(repo, 'src/domain/order.js', "import { db } from '../infra/db.js'\n")],
+  ['Bash-made suppression (sed -i)', /suppression/, () => fs.appendFileSync(path.join(repo, 'src/add.js'), '// eslint-disable-next-line\n')],
+  ['agent raises limits.diffLines via Bash', /harness-tamper/, () => write(repo, '.rig/sensors.json', fs.readFileSync(path.join(repo, '.rig/sensors.json'), 'utf8').replace('500', '5000'))],
+]
+
+for (const [name, sensor, apply] of DEFECTS) {
+  test(`seeded: ${name} is caught at Stop and in CI`, () => {
+    apply()
+    const stop = JSON.parse(hook(repo, 'stop', {}).stdout || '{}')
+    assert.equal(stop.decision, 'block', name)
+    assert.match(stop.reason, sensor)
+    gitIn(repo, 'add', '-A')
+    gitIn(repo, 'commit', '-qm', 'pr')
+    const ci = sdlc(repo, ['check', '--at', 'ci', '--base', 'main', '--config-from', 'main'])
+    assert.equal(ci.code, 1, `${name} in CI:\n${ci.stdout}`)
+    assert.match(ci.stdout, sensor)
+  })
+}
+
+test('seeded: a 700-line diff warns at Stop and blocks in CI', () => {
+  // two files under the line limit, so only the diff-size finding (a warning at Stop) fires; one 700-line file would now block at Stop
+  for (const f of ['huge1', 'huge2']) write(repo, `src/${f}.js`, Array.from({ length: 350 }, (_, i) => `export const v${i} = ${i}`).join('\n') + '\n')
+  assert.notEqual(JSON.parse(hook(repo, 'stop', {}).stdout || '{}').decision, 'block')
+  // A warn emits nothing; the proof the size sensor ran and warned is the gate summary Stop records.
+  const last = JSON.parse(fs.readFileSync(path.join(repo, '.rig/.gate'), 'utf8')).last
+  assert.ok(last, 'Stop recorded a gate summary')
+  assert.ok(last.bySensor.size >= 1 && last.warns >= 1, `size warned at Stop: ${JSON.stringify(last)}`)
+  assert.equal(last.blocks, 0)
+  gitIn(repo, 'add', '-A')
+  gitIn(repo, 'commit', '-qm', 'pr')
+  assert.match(sdlc(repo, ['check', '--at', 'ci', '--base', 'main', '--config-from', 'main']).stdout, /\[size\][\s\S]*limit 500/)
+})
+
+test('seeded: a B-number with no test blocks at ship', () => {
+  sdlc(repo, ['new', 'sub', '--type', 'feature'])
+  write(repo, '.rig/changes/sub/spec.md', '# Spec\n\n## Behaviours\n- B1 subtract, B2 negative\n')
+  write(repo, 'src/sub.js', 'export const sub = (a, b) => a - b\n')
+  write(repo, 'test/sub.test.js', "import { test } from 'node:test'\nimport assert from 'node:assert'\nimport { sub } from '../src/sub.js'\ntest('B1 subtracts', () => assert.equal(sub(3, 1), 2))\n")
+  assert.match(sdlc(repo, ['check', '--at', 'ship', '--base', 'main', '--slug', 'sub']).stdout, /\[traceability\][\s\S]*B2 .*has no test that names it/)
+})
+
+test('status --json and check name the sensors that are not configured', () => {
+  const status = JSON.parse(sdlc(repo, ['status', '--json']).stdout)
+  assert.ok(Array.isArray(status.sensors.inert), 'status --json carries inert')
+  assert.ok(!status.sensors.inert.some((i: { id: string }) => i.id === 'layering'), 'layers are declared in this repo')
+  assert.match(sdlc(repo, ['sensors']).stdout, /not configured .*rules/)
+  gitIn(repo, 'commit', '--allow-empty', '-qm', 'pr')
+  assert.match(sdlc(repo, ['check', '--at', 'ci', '--base', 'main', '--config-from', 'main']).stdout, /not configured .*rules/)
+})

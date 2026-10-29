@@ -1,0 +1,37 @@
+{
+  "name": "rig-plugin",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "node --disable-warning=ExperimentalWarning --test scripts/*.spec.ts && npm run test:e2e:unit && npm run test:e2e:fast && npm run test:e2e:parallel",
+    "typecheck": "tsc -p scripts/tsconfig.json",
+    "validate": "claude plugin validate .claude-plugin/plugin.json",
+    "test:e2e": "node tests/e2e/run.mjs --driver live",
+    "test:e2e:fast": "node tests/e2e/run.mjs --driver scripted",
+    "test:e2e:parallel": "node tests/e2e/parallel.mjs",
+    "test:e2e:stacks": "node tests/e2e/stacks.mjs",
+    "eval": "node eval/run.mjs",
+    "eval:dry": "node eval/run.mjs --dry --runs 1",
+    "test:e2e:unit": "node --test tests/e2e/lib/*.test.mjs tests/e2e/driver/*.test.mjs eval/*.test.mjs",
+    "eval:chart": "node eval/chart.mjs",
+    "eval:chart:dry": "node eval/chart.mjs --dry --runs 1",
+    "eval:wiki": "node --disable-warning=ExperimentalWarning eval/wiki.mjs",
+    "eval:learn": "node --disable-warning=ExperimentalWarning eval/learn.mjs",
+    "eval:learn:dry": "node --disable-warning=ExperimentalWarning eval/learn.mjs --dry --runs 1",
+    "eval:review": "node --disable-warning=ExperimentalWarning eval/review.mjs",
+    "eval:review:dry": "node --disable-warning=ExperimentalWarning eval/review.mjs --dry --runs 1",
+    "eval:app": "node --disable-warning=ExperimentalWarning eval/app.mjs",
+    "eval:app:dry": "node --disable-warning=ExperimentalWarning eval/app.mjs --dry --runs 1",
+    "eval:ablate": "node --disable-warning=ExperimentalWarning eval/ablate.mjs",
+    "eval:ablate:dry": "node --disable-warning=ExperimentalWarning eval/ablate.mjs --component sensor:size --runs 1 --dry",
+    "eval:wiki:dry": "node --disable-warning=ExperimentalWarning eval/wiki.mjs --dry --runs 1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0",
+    "yaml": "^2.9.1"
+  }
+}

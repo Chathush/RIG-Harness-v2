@@ -1,0 +1,56 @@
+// The harness must not tax Claude Code: per-turn and per-edit work stays flat as history grows, and nothing runs twice.
+import { test, beforeEach } from 'node:test'
+import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { makeRepo, sdlc, hook, write, gitIn, fromOld } from './testkit.ts'
+
+let repo: string
+beforeEach(() => {
+  repo = makeRepo()
+  sdlc(repo, ['init'])
+})
+
+// Every git process a command starts, by subcommand (GIT_TRACE logs each one).
+function gitCalls(args: string[]): { out: string; calls: string[] } {
+  const trace = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'rig-trace-')), 'trace')
+  const r = sdlc(repo, args, { env: { GIT_TRACE: trace } })
+  const calls = fs.existsSync(trace) ? [...fs.readFileSync(trace, 'utf8').matchAll(/trace: (?:built-in|exec): git (\S+)/g)].map(m => m[1] ?? '') : []
+  return { out: r.stdout, calls }
+}
+
+function shipped(slug: string, commit: boolean): void {
+  sdlc(repo, ['new', slug, '--type', 'chore'])
+  write(repo, `.rig/changes/${slug}/pr.md`, 'x\n')
+  if (commit) { gitIn(repo, 'add', '.'); gitIn(repo, 'commit', '-qm', `ship ${slug}`) }
+}
+
+test('status reads shipped changes with one ls-tree, never a git log per change, however many there are', () => {
+  for (const n of [1, 2, 3, 4, 5, 6]) shipped(`old-${n}`, true)
+  shipped('live', false)
+  const { out, calls } = gitCalls(['status', '--json'])
+  assert.equal(calls.filter(c => c === 'log').length, 0, `git log calls: ${calls.join(' ')}`)
+  assert.equal(calls.filter(c => c === 'ls-tree').length, 1)
+  const changes = JSON.parse(out).changes as { slug: string; status: string }[]
+  assert.equal(changes.find(c => c.slug === 'old-3'), undefined, 'a committed pr.md is shipped and not listed')
+  assert.equal(changes.find(c => c.slug === 'live')?.status, 'review', 'an uncommitted pr.md is not shipped')
+})
+
+// runs.jsonl is only Edit-protected: a shell append could forge a green row, so Stop runs its fast commands itself, always.
+test('Stop runs its fast commands even when a green run is recorded on this exact tree', () => {
+  const cmd = `node -e "require('fs').appendFileSync('.rig/count.txt','x')"`
+  write(repo, '.rig/sensors.json', fromOld({ fast: { test: cmd } }))
+  gitIn(repo, 'add', '.')
+  gitIn(repo, 'commit', '-qm', 'cfg')
+  sdlc(repo, ['new', 'xx', '--type', 'chore'])
+  hook(repo, 'prompt-submit', {})
+  write(repo, 'src/a.js', 'export const a = 1\n')
+  sdlc(repo, ['run', '--', cmd])
+  const count = (): number => fs.readFileSync(path.join(repo, '.rig/count.txt'), 'utf8').length
+  assert.equal(count(), 1)
+  hook(repo, 'stop', { session_id: 's1' })
+  assert.equal(count(), 2, 'a recorded run never stands in for the gate')
+})
+
+// The mod skips the impact check on its own reading of STATE.md, so it must read exactly what core.ts's activeSlug reads.

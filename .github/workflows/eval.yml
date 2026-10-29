@@ -1,0 +1,51 @@
+# Evals for rig itself (harness readiness 3.2). The live paired eval runs nightly and on demand, costs real money, and is capped; the dry evals
+# run first as its precondition (ci.yml runs them at $0 on every push and pull request). It never runs on a pull request: it holds a secret.
+# The gate fails the run when an arm's accepted rate or dollars per accepted task is worse than eval/baseline.json; an arm with no baseline is listed as not enforced.
+name: eval
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  dry:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.18'
+      - run: npm ci || npm install
+      - run: npm run eval:dry
+      - run: npm run eval:review:dry
+      - run: npm run eval:app:dry
+  live:
+    # The live job holds a secret, so it runs only from main: a manual dispatch on another branch would run that branch's code with it.
+    if: github.ref == 'refs/heads/main'
+    needs: dry
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.18'
+      - run: npm ci || npm install
+      - run: npm install -g @anthropic-ai/claude-code
+      - name: Paired eval (costs money; capped at 15 dollars)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: node eval/run.mjs --variant links --arms haiku-bare,haiku-rig --runs 3 --cap-run 4 --cap-total 15 --results "$RUNNER_TEMP/paired.jsonl"
+      - name: Regression gate
+        shell: bash # bash -eo pipefail: the gate's exit code survives the pipe to tee
+        run: node eval/gate.mjs "$RUNNER_TEMP/paired.jsonl" --variant links | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: paired-eval
+          path: ${{ runner.temp }}/paired.jsonl
